@@ -47,11 +47,13 @@ func (e *podEventHandler) Create(evt event.CreateEvent, q workqueue.RateLimiting
 	if pod.DeletionTimestamp != nil {
 		// on a restart of the controller manager, it's possible a new pod shows up in a state that
 		// is already pending deletion. Prevent the pod from being a creation observation.
+		dsCreateEvent.WithLabelValues("failed").Inc()
 		e.Delete(event.DeleteEvent{Meta: evt.Meta, Object: evt.Object}, q)
 		return
 	}
 
 	// If it has a ControllerRef, that's all that matters.
+	dsCreateEvent.WithLabelValues("success").Inc()
 	if controllerRef := metav1.GetControllerOf(pod); controllerRef != nil {
 		req := resolveControllerRef(pod.Namespace, controllerRef)
 		if req == nil {
@@ -155,6 +157,7 @@ func (e *podEventHandler) Update(evt event.UpdateEvent, q workqueue.RateLimiting
 func (e *podEventHandler) Delete(evt event.DeleteEvent, q workqueue.RateLimitingInterface) {
 	pod, ok := evt.Object.(*v1.Pod)
 	if !ok {
+		dsDeleteEvent.WithLabelValues("failed").Inc()
 		klog.Errorf("DeleteEvent parse pod failed, DeleteStateUnknown: %#v, obj: %#v", evt.DeleteStateUnknown, evt.Object)
 		return
 	}
@@ -162,14 +165,17 @@ func (e *podEventHandler) Delete(evt event.DeleteEvent, q workqueue.RateLimiting
 	controllerRef := metav1.GetControllerOf(pod)
 	if controllerRef == nil {
 		// No controller should care about orphans being deleted.
+		dsDeleteEvent.WithLabelValues("failed").Inc()
 		return
 	}
 	req := resolveControllerRef(pod.Namespace, controllerRef)
 	if req == nil {
+		dsDeleteEvent.WithLabelValues("failed").Inc()
 		return
 	}
 
 	klog.V(6).Infof("Pod %s/%s deleted, owner: %s", pod.Namespace, pod.Name, req.Name)
+	dsDeleteEvent.WithLabelValues("success").Inc()
 	dsKey := pod.Namespace + "/" + controllerRef.Name
 	expectations.DeletionObserved(dsKey)
 	q.Add(*req)
